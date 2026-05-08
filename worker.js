@@ -2,11 +2,14 @@
  * Surfshark → Clash Subscription Worker
  * Deploy to Cloudflare Workers
  *
- * Subscription URL:
- *   https://<your-worker>.workers.dev/?pk=<PRIVATE_KEY>&ip=<CLIENT_IP>
+ * Open the worker URL in a browser to use the generator page, which produces
+ * a properly encoded subscription URL to paste into your Clash client.
+ *
+ * Direct URL (parameters must be percent-encoded — use the generator page):
+ *   https://<your-worker>.workers.dev/?pk=<PERCENT_ENCODED_PRIVATE_KEY>
  *
  * Query parameters:
- *   pk           Your Surfshark WireGuard private key (base64) [required]
+ *   pk           Your Surfshark WireGuard private key (base64, percent-encoded) [required]
  *   ip           Your WireGuard client IP                     (default: 10.14.0.2)
  *   port         WireGuard UDP port                           (default: 51820)
  *   types        Comma-separated node types: generic, static, all (default: generic)
@@ -17,9 +20,9 @@
  * the profile-update-interval response header (default: every 6 hours).
  */
 
-const API_BASE     = 'https://api.surfshark.com/v4/server/clusters'
+const API_BASE      = 'https://api.surfshark.com/v4/server/clusters'
 const SURFSHARK_DNS = ['162.252.172.57', '162.252.172.58']
-const CACHE_TTL    = 300  // seconds — how long upstream API responses are cached
+const CACHE_TTL     = 300  // seconds — how long upstream API responses are cached
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -191,6 +194,164 @@ async function fetchNodes(type, ctx) {
   return data
 }
 
+// ─── Generator page ──────────────────────────────────────────────────────────
+
+function buildPage() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Surfshark → Clash</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, sans-serif;
+      background: #f5f5f5;
+      color: #1a1a1a;
+      display: flex;
+      justify-content: center;
+      padding: 3rem 1rem;
+    }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,.08);
+      padding: 2rem;
+      width: 100%;
+      max-width: 520px;
+    }
+    h1 { font-size: 1.3rem; margin-bottom: 1.5rem; }
+    .field { display: flex; flex-direction: column; gap: .35rem; margin-bottom: 1rem; }
+    label { font-size: .85rem; font-weight: 600; color: #555; }
+    input[type=text], input[type=number], select {
+      border: 1px solid #d0d0d0;
+      border-radius: 6px;
+      padding: .5rem .7rem;
+      font-size: .95rem;
+      width: 100%;
+      outline: none;
+      transition: border-color .15s;
+    }
+    input:focus, select:focus { border-color: #0070f3; }
+    .checkrow { display: flex; align-items: center; gap: .5rem; }
+    .checkrow input { width: auto; }
+    button {
+      width: 100%;
+      padding: .65rem;
+      background: #0070f3;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 1rem;
+      cursor: pointer;
+      margin-top: .5rem;
+      transition: background .15s;
+    }
+    button:hover { background: #005ed1; }
+    .result { margin-top: 1.5rem; display: none; }
+    .result label { margin-bottom: .35rem; display: block; font-size: .85rem; font-weight: 600; color: #555; }
+    .url-row { display: flex; gap: .5rem; }
+    .url-row input {
+      flex: 1;
+      font-family: monospace;
+      font-size: .8rem;
+      background: #f9f9f9;
+      color: #333;
+    }
+    .url-row button { width: auto; padding: .5rem 1rem; margin-top: 0; font-size: .85rem; }
+    .copied { background: #16a34a !important; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Surfshark → Clash Subscription</h1>
+
+    <div class="field">
+      <label for="pk">WireGuard Private Key *</label>
+      <input id="pk" type="text" placeholder="Paste your base64 private key from Surfshark" required>
+    </div>
+
+    <div class="field">
+      <label for="ip">Client IP</label>
+      <input id="ip" type="text" placeholder="10.14.0.2 (default)">
+    </div>
+
+    <div class="field">
+      <label for="port">UDP Port</label>
+      <input id="port" type="number" placeholder="51820 (default)">
+    </div>
+
+    <div class="field">
+      <label for="types">Server Types</label>
+      <select id="types">
+        <option value="generic">Generic</option>
+        <option value="static">Static</option>
+        <option value="all">All</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <div class="checkrow">
+        <input id="group_region" type="checkbox" checked>
+        <label for="group_region">Include per-region proxy groups</label>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="checkrow">
+        <input id="group_p2p" type="checkbox" checked>
+        <label for="group_p2p">Include P2P proxy group</label>
+      </div>
+    </div>
+
+    <button onclick="generate()">Generate Subscription URL</button>
+
+    <div class="result" id="result">
+      <label>Subscription URL — paste this into your Clash client</label>
+      <div class="url-row">
+        <input id="output" type="text" readonly>
+        <button id="copyBtn" onclick="copy()">Copy</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function generate() {
+      const pk = document.getElementById('pk').value.trim()
+      if (!pk) { document.getElementById('pk').focus(); return }
+
+      const params = new URLSearchParams()
+      params.set('pk', pk)
+
+      const ip = document.getElementById('ip').value.trim()
+      if (ip) params.set('ip', ip)
+
+      const port = document.getElementById('port').value.trim()
+      if (port) params.set('port', port)
+
+      params.set('types', document.getElementById('types').value)
+
+      if (!document.getElementById('group_region').checked) params.set('group_region', 'false')
+      if (!document.getElementById('group_p2p').checked)    params.set('group_p2p', 'false')
+
+      const base = window.location.origin + window.location.pathname
+      document.getElementById('output').value = base + '?' + params.toString()
+      document.getElementById('result').style.display = 'block'
+    }
+
+    function copy() {
+      navigator.clipboard.writeText(document.getElementById('output').value)
+      const btn = document.getElementById('copyBtn')
+      btn.textContent = 'Copied!'
+      btn.classList.add('copied')
+      setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied') }, 2000)
+    }
+  </script>
+</body>
+</html>`
+}
+
 // ─── Request handler ─────────────────────────────────────────────────────────
 
 export default {
@@ -202,20 +363,28 @@ export default {
 
     const url = new URL(request.url)
 
-    // Show usage if no private key provided
+    // Show generator page if no private key provided
     if (!url.searchParams.has('pk')) {
-      return new Response(USAGE, {
-        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      return new Response(buildPage(), {
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
       })
     }
 
     // ── Parse parameters ──────────────────────────────────────────────────
-    const privateKey  = url.searchParams.get('pk')           ?? 'YOUR_PRIVATE_KEY'
-    const clientIp    = url.searchParams.get('ip')           ?? '10.14.0.2'
+    // pk must be percent-encoded — use the generator page to produce the URL
+    const privateKey  = url.searchParams.get('pk')            ?? ''
+    const clientIp    = url.searchParams.get('ip')            ?? '10.14.0.2'
     const port        = parseInt(url.searchParams.get('port') ?? '51820')
-    const typesParam  = url.searchParams.get('types')        ?? 'generic'
+    const typesParam  = url.searchParams.get('types')         ?? 'generic'
     const groupRegion = flag(url.searchParams.get('group_region'), true)
     const groupP2p    = flag(url.searchParams.get('group_p2p'),    true)
+
+    if (!privateKey) {
+      return new Response('# Error: pk parameter is empty.\n', {
+        status: 400,
+        headers: { 'Content-Type': 'text/yaml; charset=utf-8' },
+      })
+    }
 
     // Resolve which API types to fetch
     const requestedTypes = typesParam === 'all'
@@ -265,22 +434,3 @@ export default {
     }
   },
 }
-
-// ─── Usage page ──────────────────────────────────────────────────────────────
-
-const USAGE = `Surfshark → Clash Subscription Worker
-
-Required parameters:
-  pk            WireGuard private key (base64)
-
-Optional parameters:
-  ip            WireGuard client IP          (default: 10.14.0.2)
-  port          WireGuard UDP port           (default: 51820)
-  types         generic | static | all       (default: generic)
-  group_region  Include per-region groups    (default: true)
-  group_p2p     Include P2P group            (default: true)
-
-Example:
-  https://<your-worker>.workers.dev/?pk=BASE64KEY
-  https://<your-worker>.workers.dev/?pk=BASE64KEY&types=all&group_region=false
-`
