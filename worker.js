@@ -42,10 +42,17 @@ function nodeName(node) {
   const flag  = flagEmoji(node.countryCode)
   const tags  = node.tags ?? []
   let extras  = ''
-  if (node.type === 'static')     extras += ' [Static]'
+  let suffix  = ''
+  if (node.type === 'static') {
+    // Static servers share country/city, so disambiguate with the numeric
+    // identifier from the connection hostname (e.g. de-fra-st003.prod… → 003)
+    const match = node.connectionName?.match(/-st(\d+)\./)
+    if (match) suffix = ` ${match[1]}`
+    extras += ' [Static]'
+  }
   if (tags.includes('p2p'))       extras += ' [P2P]'
   if (tags.includes('virtual'))   extras += ' [V]'
-  return `${flag} ${node.country} - ${node.location}${extras}`
+  return `${flag} ${node.country} - ${node.location}${suffix}${extras}`
 }
 
 // Minimal YAML serialiser — only handles the types we actually use
