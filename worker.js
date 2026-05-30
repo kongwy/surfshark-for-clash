@@ -13,6 +13,10 @@
  *   ip           Your WireGuard client IP                     (default: 10.14.0.2)
  *   port         WireGuard UDP port                           (default: 51820)
  *   types        Comma-separated node types: generic, static, all (default: generic)
+ *   countries    Comma-separated whitelist of country codes and/or region codes
+ *                (e.g. us,jp,eu). A node passes if its countryCode or regionCode
+ *                matches any token (case-insensitive). Empty = no filter.
+ *   group_auto   Include the global url-test "Auto" group     (default: true)
  *   group_region Include per-region proxy groups              (default: true)
  *   group_p2p    Include a P2P-only proxy group               (default: true)
  *
@@ -94,7 +98,7 @@ function buildProxy(node, privateKey, clientIp, port) {
 
 // ─── Config builder ──────────────────────────────────────────────────────────
 
-function buildConfig(proxies, nodes, { groupRegion, groupP2p }) {
+function buildConfig(proxies, nodes, { groupAuto, groupRegion, groupP2p }) {
   const allNames = proxies.map(p => p.name)
 
   // Per-region index
@@ -129,20 +133,31 @@ function buildConfig(proxies, nodes, { groupRegion, groupP2p }) {
     ...proxies.map(proxyToYaml),
     '',
     'proxy-groups:',
-    // ── Auto (url-test) ──
-    '  - name: "🌍 Surfshark Auto"',
-    '    type: url-test',
-    '    url: http://www.gstatic.com/generate_204',
-    '    interval: 300',
-    '    tolerance: 50',
-    '    proxies:',
-    ...allNames.map(n => `      - "${n}"`),
-    '',
-    // ── Manual select ──
+  )
+
+  // ── Auto (url-test) ──
+  // Skipping this group dramatically lowers memory use on memory-constrained
+  // clients (e.g. iOS Network Extensions), since url-test maintains per-proxy
+  // latency state for every member.
+  if (groupAuto) {
+    L.push(
+      '  - name: "🌍 Surfshark Auto"',
+      '    type: url-test',
+      '    url: http://www.gstatic.com/generate_204',
+      '    interval: 300',
+      '    tolerance: 50',
+      '    proxies:',
+      ...allNames.map(n => `      - "${n}"`),
+      '',
+    )
+  }
+
+  // ── Manual select ──
+  L.push(
     '  - name: "🖐 Surfshark Select"',
     '    type: select',
     '    proxies:',
-    '      - "🌍 Surfshark Auto"',
+    ...(groupAuto ? ['      - "🌍 Surfshark Auto"'] : []),
     ...allNames.map(n => `      - "${n}"`),
     '',
   )
@@ -299,6 +314,18 @@ function buildPage() {
     </div>
 
     <div class="field">
+      <label for="countries">Countries (optional)</label>
+      <input id="countries" type="text" placeholder="e.g. us,jp,eu — country/region codes, empty = all">
+    </div>
+
+    <div class="field">
+      <div class="checkrow">
+        <input id="group_auto" type="checkbox" checked>
+        <label for="group_auto">Include url-test Auto group (disable on iOS to save memory)</label>
+      </div>
+    </div>
+
+    <div class="field">
       <div class="checkrow">
         <input id="group_region" type="checkbox" checked>
         <label for="group_region">Include per-region proxy groups</label>
@@ -339,6 +366,10 @@ function buildPage() {
 
       params.set('types', document.getElementById('types').value)
 
+      const countries = document.getElementById('countries').value.trim()
+      if (countries) params.set('countries', countries)
+
+      if (!document.getElementById('group_auto').checked)   params.set('group_auto', 'false')
       if (!document.getElementById('group_region').checked) params.set('group_region', 'false')
       if (!document.getElementById('group_p2p').checked)    params.set('group_p2p', 'false')
 
@@ -383,8 +414,15 @@ export default {
     const clientIp    = url.searchParams.get('ip')            ?? '10.14.0.2'
     const port        = parseInt(url.searchParams.get('port') ?? '51820')
     const typesParam  = url.searchParams.get('types')         ?? 'generic'
+    const groupAuto   = flag(url.searchParams.get('group_auto'),   true)
     const groupRegion = flag(url.searchParams.get('group_region'), true)
     const groupP2p    = flag(url.searchParams.get('group_p2p'),    true)
+
+    // Whitelist filter — comma-separated, mixes country codes and region codes.
+    const countries = new Set(
+      (url.searchParams.get('countries') ?? '')
+        .split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+    )
 
     if (!privateKey) {
       return new Response('# Error: pk parameter is empty.\n', {
@@ -410,6 +448,15 @@ export default {
       // WireGuard only — must have a public key
       nodes = nodes.filter(n => n.pubKey)
 
+      // Apply whitelist filter — a node passes if its countryCode or
+      // regionCode matches any token.
+      if (countries.size > 0) {
+        nodes = nodes.filter(n =>
+          countries.has((n.countryCode ?? '').toLowerCase()) ||
+          countries.has((n.regionCode  ?? '').toLowerCase())
+        )
+      }
+
       if (nodes.length === 0) {
         return new Response(
           '# No nodes matched the given filters.\n',
@@ -419,7 +466,7 @@ export default {
 
       // ── Build and return YAML ─────────────────────────────────────────
       const proxies = nodes.map(n => buildProxy(n, privateKey, clientIp, port))
-      const yaml    = buildConfig(proxies, nodes, { groupRegion, groupP2p })
+      const yaml    = buildConfig(proxies, nodes, { groupAuto, groupRegion, groupP2p })
 
       return new Response(yaml, {
         headers: {
