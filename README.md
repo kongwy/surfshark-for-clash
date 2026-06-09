@@ -43,14 +43,16 @@ https://surfshark-clash.<your-subdomain>.workers.dev/?pk=<PRIVATE_KEY>
 
 ### Query parameters
 
-| Parameter      | Required | Description                                | Default     |
-|----------------|----------|--------------------------------------------|-------------|
-| `pk`           | Yes      | Your WireGuard private key (base64)        | —           |
-| `ip`           | No       | Your WireGuard client IP                   | `10.14.0.2` |
-| `port`         | No       | WireGuard UDP port                         | `51820`     |
-| `types`        | No       | Node types: `generic`, `static`, or `all` | `generic`   |
-| `group_region` | No       | Include per-region proxy groups            | `true`      |
-| `group_p2p`    | No       | Include a P2P-only proxy group             | `true`      |
+| Parameter      | Required | Description                                                          | Default     |
+|----------------|----------|----------------------------------------------------------------------|-------------|
+| `pk`           | Yes      | Your WireGuard private key (base64)                                  | —           |
+| `ip`           | No       | Your WireGuard client IP                                            | `10.14.0.2` |
+| `port`         | No       | WireGuard UDP port                                                  | `51820`     |
+| `types`        | No       | Node types: `generic`, `static`, or `all`                          | `generic`   |
+| `countries`    | No       | Comma-separated whitelist of country/region codes (e.g. `us,jp,eu`) | *(all)*     |
+| `group_auto`   | No       | Include the global url-test Auto group                              | `true`      |
+| `group_region` | No       | Include per-region proxy groups                                     | `true`      |
+| `group_p2p`    | No       | Include a P2P-only proxy group                                      | `true`      |
 
 ### Examples
 
@@ -61,12 +63,17 @@ https://surfshark-clash.<your-subdomain>.workers.dev/?pk=<PRIVATE_KEY>
 # Include static servers too
 ?pk=BASE64KEY&types=all
 
+# Only US, Japan, and the whole EU region
+?pk=BASE64KEY&countries=us,jp,eu
+
 # No per-region groups
 ?pk=BASE64KEY&group_region=false
 
-# Minimal — just Auto and Select, no extra groups
-?pk=BASE64KEY&group_region=false&group_p2p=false
+# Minimal — just Select, no extra groups (lowest memory; best for iOS)
+?pk=BASE64KEY&group_auto=false&group_region=false&group_p2p=false
 ```
+
+> **iOS / Stash note:** iOS Network Extensions have a hard ~50 MB memory cap. Surfshark's full server list can exceed it on launch, producing a misleading `Received a system memory alert; please try to reduce the number of rules` error. Narrow the list with `countries=` and set `group_auto=false` (the url-test group is the biggest memory consumer) to stay under the limit.
 
 ## Node types
 
@@ -80,7 +87,7 @@ https://surfshark-clash.<your-subdomain>.workers.dev/?pk=<PRIVATE_KEY>
 
 The config includes three types of proxy groups:
 
-- **🌍 Surfshark Auto** — `url-test` group, automatically picks the lowest-latency node (checked every 5 minutes)
+- **🌍 Surfshark Auto** — `url-test` group, automatically picks the lowest-latency node (checked every 5 minutes; disable with `group_auto=false`)
 - **🖐 Surfshark Select** — manual `select` group with all nodes listed
 - **⚡ Surfshark P2P** — `select` group containing only P2P-tagged nodes (disable with `group_p2p=false`)
 - **Per-region groups** — one `select` group per geographic region (disable with `group_region=false`)
